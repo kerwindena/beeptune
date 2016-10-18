@@ -1,0 +1,167 @@
+#!/bin/bash
+
+## beeptune
+## output tunes to pcspkr format
+## (c) 2016 mustangflyer; GPLv3+ (except the musical scale table)
+##
+## Accepts a superset of GRUB's play command's syntax:
+## TEMPO [OUTPUT] [PITCH DURATION_MULTILIER]+
+##   where
+##     TEMPO     inverse linear scale: 30=2s, 60=1s, 120=0.5s ...
+##     OUTPUT    --grub print GRUB play-formatted tune
+##               --beep play the tune using beep(1)
+##               --cmd  print baked beep(1) command line for the tune
+##               defaults to --beep
+##     PITCH     0<Hz<20000, supports decimals
+##               0 produces a rest
+##               musical note (for usability), see the table below
+##     DURATION  multiplier for TEMPO, decimals currently unsupported
+
+
+# note->Hz scale taken from
+# http://www.phy.mtu.edu/~suits/notefreqs.html
+# B. H. Suits, Physics Department, Michigan Technological University, (c) 1998-2015
+declare -A scale
+scale['c3']='130.81'
+scale['c#3']='138.59'
+scale['d3']='146.83'
+scale['d#3']='155.56'
+scale['e']='164.81'
+scale['f3']='174.61'
+scale['f#3']='185.00'
+scale['g3']='196.00'
+scale['g#3']='207.65'
+scale['a3']='220.00'
+scale['a#3']='233.08'
+scale['b3']='246.92'
+scale['c4']='261.6' # middle C
+scale['c#4']='277.18'
+scale['d4']='293.66'
+scale['d#4']='311.13'
+scale['e4']='329.63'
+scale['f4']='349.23'
+scale['f#4']='369.99'
+scale['g4']='392.00'
+scale['g#4']='415.30'
+scale['a4']='440.00'
+scale['a#4']='466.16'
+scale['b4']='493.88'
+scale['c5']='523.25'
+scale['c#5']='554.37'
+scale['d5']='587.33'
+scale['d#5']='622.25'
+scale['e5']='659.25'
+scale['f5']='698.46'
+scale['f#5']='739.99'
+scale['g5']='783.99'
+scale['g#5']='830.61'
+scale['a5']='880.00'
+scale['a#5']='932.33'
+scale['b5']='987.77'
+scale['c6']='1046.50'
+scale['c#6']='1108.73'
+scale['d6']='1174.51'
+scale['d#6']='1244.51'
+scale['e6']='1318.51'
+scale['f6']='1396.91'
+scale['f#6']='1479.98'
+scale['g6']='1567.98'
+scale['g#6']='1661.22'
+scale['a6']='1760.00'
+scale['a#6']='1864.66'
+scale['b6']='1975.53'
+scale['c7']='2093.00'
+
+usage () {
+    echo "Usage: $0 [--beep|--grub] TEMPO [PITCH DURATION_MULTIPLIER]+"
+}
+
+case "$1" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    -b|--beep)
+        out='beep'; shift ;;
+    -c|--cmd)
+        out='cmd'; shift ;;
+    -g|--grub)
+        out='grub'; shift ;;
+    -*)
+        echo >&2  "error: don't know about flag '$1'"
+        usage >&2
+        exit 1
+        ;;
+    *)
+        out='beep' ;;
+esac
+
+if [ "$#" -lt 1 ]; then
+    echo >&2 "error: expected TEMPO argument"
+    usage >&2
+    exit 1
+fi
+
+# converts to beep(1)-ready format (and beeps if --beep was specified)
+tune_to_beep () {
+    local tempo=$((60000/$1))
+    local beep_tune=''
+
+    shift
+    while [ -n "$2" ]; do
+        case "$1" in
+            0)
+                # grub's play does a pause on freq 0,
+                # so a trailing delay for the current note is issued
+                beep_tune="$beep_tune -D $(($tempo * ${2:-1}))"
+                ;;
+            *)
+                if [ -n "$beep_tune" ]; then
+                    beep_tune="$beep_tune -n"
+                fi
+                beep_tune="$beep_tune -f $1 -l $(($tempo * ${2:-1}))"
+                ;;
+        esac
+        shift 2
+    done
+
+    if [ "$out" == 'cmd' ]; then
+        echo "beep $beep_tune"
+    else
+        beep $beep_tune
+    fi
+}
+
+# converts to grub-ready format
+# rounds notes to nearest Hz
+tune_to_grub () {
+    local grub_tune=''
+    while [ -n "$1" ]; do
+        grub_tune="$grub_tune $(printf '%.0f' $1)"
+        shift
+    done
+    echo "${grub_tune:1}" # stip leading space
+}
+
+# converts musical scale to Hz
+notes_to_Hz () {
+    local Hz_tune="$1"
+    shift
+    while [ -n "$2" ]; do
+        case "$1" in
+            *[!0-9]*) Hz_tune="$Hz_tune ${scale[$1]} $2" ;;
+            *) Hz_tune="$Hz_tune $1 $2" ;;
+        esac
+        shift 2
+    done
+    echo "$Hz_tune"
+}
+
+tune=$(notes_to_Hz $@)
+
+if [ "$out" == 'grub' ]; then
+    echo "$(tune_to_grub $tune)"
+    exit $?
+else
+    tune_to_beep $tune
+fi
